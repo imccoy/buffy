@@ -1,0 +1,4 @@
+.ghci
+dist/
+log/
+.*.swp
