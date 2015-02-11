@@ -1,13 +1,15 @@
 module ImageSearch where
 
-import Control.Lens
-import Control.Monad (join)
-import Data.Aeson.Lens (key, _Array, _String)
-import Data.ByteString (ByteString)
-import Data.Vector (Vector, forM, fromList)
+import           Control.Lens
+import           Control.Monad (join)
+import           Data.Aeson.Lens (key, _Array, _String)
+import           Data.ByteString (ByteString)
+import           Data.Vector (Vector, forM, fromList)
 import           Data.Text (Text)
 import qualified Data.Text as T
-import Network.Wreq
+import           Network.Connection               (TLSSettings (..))
+import           Network.HTTP.Client.TLS          (mkManagerSettings, tlsManagerSettings)
+import           Network.Wreq
 
 import qualified Config
 
@@ -20,6 +22,7 @@ search q = do
                       & param "cx" .~ [Config.search_engine_id]
                       & param "q" .~ [q]
                       & param "searchType" .~ ["image"]
+                      & manager .~ Left (mkManagerSettings (TLSSettingsSimple True False False) Nothing)
   response <- getWith opts "https://www.googleapis.com/customsearch/v1"
   let maybeItems = response ^? responseBody . key "items" . _Array
   return $ do 
