@@ -22,8 +22,9 @@ Executable buffy
   hs-source-dirs: src
   main-is: Main.hs
 
-  extensions: OverloadedStrings
+  extensions: OverloadedStrings DeriveDataTypeable
   Build-depends:
+    aeson                     >= 0.7.0.4,
     attoparsec                >= 0.11.3.4 && < 0.12,
     blaze-builder             >= 0.3.3.4 && < 0.4,
     bytestring                >= 0.9.1   && < 0.11,
@@ -31,6 +32,7 @@ Executable buffy
     containers,                
     heist                     >= 0.14    && < 0.15,
     http-client-tls           >= 0.2.2   && < 0.3,
+    http-types                >= 0.8.5   && < 0.9,
     lens-aeson                >= 1.0.0.3 && < 1.1,
     MonadCatchIO-transformers >= 0.2.1   && < 0.4,
     mtl                       >= 2       && < 3,
