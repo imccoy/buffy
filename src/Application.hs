@@ -8,9 +8,7 @@ module Application where
 import Control.Lens
 import Snap.Snaplet
 
-import qualified ImagesSnaplet
-
-data App = App { _images :: Snaplet ImagesSnaplet.Images }
+data App = App { }
 
 makeLenses ''App
 

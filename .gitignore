@@ -1,4 +1,5 @@
 .ghci
 dist/
 log/
+src/Config.hs
 .*.swp

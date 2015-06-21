@@ -5,12 +5,17 @@ module Site
 import           Blaze.ByteString.Builder.ByteString as BB
 import           Blaze.ByteString.Builder.Char.Utf8 as BBC
 import           Control.Applicative
-import           Control.Monad (forM_)
+import           Control.Lens
+import           Control.Monad (join, forM_, liftM, liftM2, void)
 import           Control.Monad.IO.Class (liftIO)
 import           Data.Attoparsec.Text (decimal, endOfInput, parseOnly)
+import           Data.Aeson
+import           Data.Aeson.Encode (encodeToByteStringBuilder)
 import           Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as C
 import           Data.Char (isSpace)
+import           Data.Either.Combinators (rightToMaybe)
+import           Data.Maybe (fromJust)
 import           Data.Monoid
 import qualified Data.Text as T
 import           Data.Text (Text)
@@ -19,11 +24,15 @@ import qualified Data.Vector as Vector
 import           Safe
 import           Snap.Core
 import           Snap.Snaplet
+import           Text.Blaze.Html.Renderer.Utf8 (renderHtmlBuilder)
 
 import           Application
 import qualified ImageSearch
-import qualified ImagesSnaplet
+import qualified ImagesSession
 import qualified Slack
+import qualified Urls
+import qualified Views.Common
+import qualified Views.Images
 
 data Command = ImageSearchCommand Text
              | ImageShowCommand Int
@@ -40,33 +49,16 @@ parseCommand incoming = parse' cmd args
       of (Right n) -> ImageShowCommand n
          _ -> CommandParseError $ "Can't send image '" `T.append` q `T.append` "', it's not a number"
 
-handleImageSearchResults :: (Maybe (Vector.Vector ImageSearch.Result)) -> Text -> Text -> Handler App App ()
-handleImageSearchResults Nothing _ _ = writeBS "oh no, no image response"
-handleImageSearchResults (Just imageResults) channel user = do
-  with images $ ImagesSnaplet.remember channel user imageResults
-  sendImageSearchResponse imageResults channel user
-
 handleImageSearch :: Text -> Text -> Text -> Handler App App ()
 handleImageSearch q channel user = do
-  writeBuilder $ BB.fromByteString "searching '" <> BBC.fromText q <> BB.fromByteString "'\n"
   results <- liftIO $ ImageSearch.search q
-  handleImageSearchResults results channel user
+  handleImageSearchResults q channel user results
 
-sendImageSearchResponse :: Vector.Vector ImageSearch.Result -> Text -> Text -> Handler App App ()
-sendImageSearchResponse results channel user = do
-  forM_ (zip [1..] $ Vector.toList results) $ \(n, result) -> do
-    let ss = [C.pack (show n), 
-              " ",
-              encodeUtf8 $ ImageSearch.thumbnail result,
-              "\n"]
-    writeBuilder $ mconcat [ BB.fromByteString s | s <- ss]
-
-handleImageShow :: Int -> Text -> Text -> Handler App App ()
-handleImageShow n channel user = do
-  url <- with images $ ImagesSnaplet.fetch channel user n
-  case url of
-    Nothing -> writeBuilder $ BBC.fromText (fromJustDef "No images here" url)
-    (Just u) -> liftIO (Slack.postMessage channel u) >> writeLBS "Posted"
+handleImageSearchResults :: Text -> Text -> Text -> (Maybe (Vector.Vector ImageSearch.Result)) -> Handler App App ()
+handleImageSearchResults _ _ _ Nothing = writeBS "oh no, no image response"
+handleImageSearchResults query channel user (Just imageResults) = do
+  imageSessionId <- ImagesSession.remember query channel user imageResults
+  writeBS . encodeUtf8 $ "<" `T.append` (Urls.absolute $ Urls.images imageSessionId) `T.append` ">"
 
 handleIncomingCommand :: Handler App App ()
 handleIncomingCommand = method POST $ do
@@ -80,14 +72,43 @@ handleIncomingCommand = method POST $ do
     go _ _ Nothing = writeBS "where's my user?"
     go (Just cmd) (Just channelId) (Just userId) = go' cmd channelId userId
     go' (ImageSearchCommand q) = handleImageSearch q
-    go' (ImageShowCommand n) = handleImageShow n
+
+handleImagesGet :: Handler App App ()
+handleImagesGet = method GET $ do
+  imageSessionId <- getParam "imageSessionId" >>= return . fmap decodeUtf8
+  imageSession <- maybe (return Nothing)
+                        ImagesSession.fetch
+                        imageSessionId
+  writeBuilder $ renderHtmlBuilder $ Views.Images.list imageSessionId imageSession
+
+imageFromSession :: ImagesSession.ImageSearchSession -> Int -> Maybe ImageSearch.Result
+imageFromSession imageSession imageId = (Vector.!?) (imageSession ^. ImagesSession.images) imageId
+
+handleImageGet :: Handler App App ()
+handleImageGet = method GET $ do
+  imageSessionId <- getParam "imageSessionId" >>= return . fmap decodeUtf8
+  imageId <- getParam "imageId" >>= return . (\s -> rightToMaybe . parseOnly (decimal <* endOfInput) . decodeUtf8 =<< s)
+  imageSession <- maybe (return Nothing)
+                        ImagesSession.fetch
+                        imageSessionId
+  let image = join $ liftM2 imageFromSession imageSession imageId
+  case liftM2 Slack.postMessage ((^. ImagesSession.channel) <$> imageSession) (ImageSearch.link <$> image) of
+    Just doPost -> void $ liftIO doPost
+    Nothing -> writeBS "Nothing to post"
+  writeBuilder $ renderHtmlBuilder $ Views.Common.jsClose
+  
+
+  
 
 routes :: [(ByteString, Handler App App ())]
-routes = [ ("/incoming_command", handleIncomingCommand)]
+routes = [ 
+  ("/incoming_command", handleIncomingCommand),
+  (encodeUtf8 $ Urls.images ":imageSessionId", handleImagesGet),
+  (encodeUtf8 $ Urls.image ":imageSessionId" ":imageId", handleImageGet)
+ ]
 
 app :: SnapletInit App App
 app = makeSnaplet "app" "An snaplet example application." Nothing $ do
-    is <- nestSnaplet "images" images $ ImagesSnaplet.imagesInit
     addRoutes routes
-    return $ App is
+    return $ App
 
